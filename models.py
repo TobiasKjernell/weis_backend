@@ -21,7 +21,8 @@ class YoutubeVideo(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
     video: Mapped[str] = mapped_column(String(200), nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)    
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=True)    
     position: Mapped[int] = mapped_column(Integer)
     owner: Mapped["User"] = relationship(back_populates="youtube_videos")
 
