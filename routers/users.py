@@ -1,5 +1,15 @@
 from fastapi import APIRouter, Depends, status, HTTPException
-from schemas import Token, ArtistCreate, ArtistAdminResponse
+from schemas import (
+    Token,
+    ArtistCreate,
+    ArtistAdminResponse,
+    YoutubeVideoCreate,
+    YoutubeVideoUpdate,
+    YoutubeVideoResponse,
+    TourDateCreate,
+    TourDateUpdate,
+    TourDateResponse,
+)
 from typing import Annotated
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +22,15 @@ import models
 router = APIRouter()
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+async def _get_artist_by_slug_for_admin(slug: str, db: DbSession) -> models.User:
+    result = await db.execute(
+        select(models.User).where(models.User.slug == slug, models.User.is_admin == False)
+    )
+    artist = result.scalars().first()
+    if not artist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
+    return artist
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: DbSession):
@@ -56,3 +75,106 @@ async def get_artist_admin(slug: str, db: DbSession, _admin: CurrentAdmin):
     if not artist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
     return artist
+
+# --- Admin-on-behalf-of-artist content management ---
+# The artist-facing /api/youtube and /api/tour-dates routes only ever act on
+# the token's own user_id. These mirror them so an admin can help an artist
+# manage their content without needing that artist's credentials.
+
+@router.get("/{slug}/youtube", response_model=list[YoutubeVideoResponse])
+async def admin_list_artist_youtube(slug: str, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(
+        select(models.YoutubeVideo)
+        .where(models.YoutubeVideo.user_id == artist.id)
+        .order_by(models.YoutubeVideo.position)
+    )
+    return result.scalars().all()
+
+@router.post("/{slug}/youtube", response_model=YoutubeVideoResponse, status_code=status.HTTP_201_CREATED)
+async def admin_create_artist_youtube(slug: str, video_in: YoutubeVideoCreate, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    video = models.YoutubeVideo(**video_in.model_dump(), user_id=artist.id)
+    db.add(video)
+    await db.commit()
+    await db.refresh(video)
+    return video
+
+@router.patch("/{slug}/youtube/{video_id}", response_model=YoutubeVideoResponse)
+async def admin_update_artist_youtube(
+    slug: str, video_id: int, video_in: YoutubeVideoUpdate, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(select(models.YoutubeVideo).where(models.YoutubeVideo.id == video_id))
+    video = result.scalars().first()
+
+    if not video or video.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+
+    for field, value in video_in.model_dump(exclude_unset=True).items():
+        setattr(video, field, value)
+
+    await db.commit()
+    await db.refresh(video)
+    return video
+
+@router.delete("/{slug}/youtube/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_artist_youtube(slug: str, video_id: int, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(select(models.YoutubeVideo).where(models.YoutubeVideo.id == video_id))
+    video = result.scalars().first()
+
+    if not video or video.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+
+    await db.delete(video)
+    await db.commit()
+
+@router.get("/{slug}/tour-dates", response_model=list[TourDateResponse])
+async def admin_list_artist_tour_dates(slug: str, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(
+        select(models.TourDates)
+        .where(models.TourDates.user_id == artist.id)
+        .order_by(models.TourDates.date)
+    )
+    return result.scalars().all()
+
+@router.post("/{slug}/tour-dates", response_model=TourDateResponse, status_code=status.HTTP_201_CREATED)
+async def admin_create_artist_tour_date(slug: str, tour_date_in: TourDateCreate, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    tour_date = models.TourDates(**tour_date_in.model_dump(), user_id=artist.id)
+    db.add(tour_date)
+    await db.commit()
+    await db.refresh(tour_date)
+    return tour_date
+
+@router.patch("/{slug}/tour-dates/{tour_date_id}", response_model=TourDateResponse)
+async def admin_update_artist_tour_date(
+    slug: str, tour_date_id: int, tour_date_in: TourDateUpdate, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(select(models.TourDates).where(models.TourDates.id == tour_date_id))
+    tour_date = result.scalars().first()
+
+    if not tour_date or tour_date.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour date not found")
+
+    for field, value in tour_date_in.model_dump(exclude_unset=True).items():
+        setattr(tour_date, field, value)
+
+    await db.commit()
+    await db.refresh(tour_date)
+    return tour_date
+
+@router.delete("/{slug}/tour-dates/{tour_date_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_artist_tour_date(slug: str, tour_date_id: int, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(select(models.TourDates).where(models.TourDates.id == tour_date_id))
+    tour_date = result.scalars().first()
+
+    if not tour_date or tour_date.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour date not found")
+
+    await db.delete(tour_date)
+    await db.commit()

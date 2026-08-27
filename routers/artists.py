@@ -11,7 +11,9 @@ router = APIRouter()
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 async def _get_artist_by_slug(slug: str, db: DbSession) -> models.User:
-    result = await db.execute(select(models.User).where(models.User.slug == slug))
+    result = await db.execute(
+        select(models.User).where(models.User.slug == slug, models.User.is_admin == False)
+    )
     artist = result.scalars().first()
     if not artist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
@@ -19,7 +21,9 @@ async def _get_artist_by_slug(slug: str, db: DbSession) -> models.User:
 
 @router.get("", response_model=list[ArtistPublic])
 async def list_artists(db: DbSession):
-    result = await db.execute(select(models.User).order_by(models.User.display_name))
+    result = await db.execute(
+        select(models.User).where(models.User.is_admin == False).order_by(models.User.display_name)
+    )
     return result.scalars().all()
 
 @router.get("/{slug}", response_model=ArtistPublic)
