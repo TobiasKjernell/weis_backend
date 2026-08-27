@@ -50,6 +50,7 @@ class ArtistPublic(BaseModel):
 
 class YoutubeVideoBase(BaseModel):
     video: str = Field(min_length=1, max_length=200)
+    title: str | None = Field(default=None, max_length=200)
     position: int
 
 class YoutubeVideoCreate(YoutubeVideoBase):
@@ -57,6 +58,7 @@ class YoutubeVideoCreate(YoutubeVideoBase):
 
 class YoutubeVideoUpdate(BaseModel):
     video: str | None = Field(default=None, min_length=1, max_length=200)
+    title: str | None = Field(default=None, max_length=200)
     position: int | None = None
 
 class YoutubeVideoResponse(YoutubeVideoBase):
