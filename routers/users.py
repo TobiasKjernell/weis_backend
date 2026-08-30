@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from database import get_db
 from auth import create_access_token, verify_password, hash_password, CurrentAdmin
-from sqlalchemy import select
+from sqlalchemy import func, select
 import models
 
 router = APIRouter()
@@ -31,6 +31,13 @@ async def _get_artist_by_slug_for_admin(slug: str, db: DbSession) -> models.User
     if not artist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
     return artist
+
+async def _next_youtube_position(db: DbSession, user_id: int) -> int:
+    result = await db.execute(
+        select(func.max(models.YoutubeVideo.position)).where(models.YoutubeVideo.user_id == user_id)
+    )
+    max_position = result.scalar()
+    return (max_position + 1) if max_position is not None else 0
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: DbSession):
@@ -94,7 +101,10 @@ async def admin_list_artist_youtube(slug: str, db: DbSession, _admin: CurrentAdm
 @router.post("/{slug}/youtube", response_model=YoutubeVideoResponse, status_code=status.HTTP_201_CREATED)
 async def admin_create_artist_youtube(slug: str, video_in: YoutubeVideoCreate, db: DbSession, _admin: CurrentAdmin):
     artist = await _get_artist_by_slug_for_admin(slug, db)
-    video = models.YoutubeVideo(**video_in.model_dump(), user_id=artist.id)
+    data = video_in.model_dump()
+    if data["position"] is None:
+        data["position"] = await _next_youtube_position(db, artist.id)
+    video = models.YoutubeVideo(**data, user_id=artist.id)
     db.add(video)
     await db.commit()
     await db.refresh(video)

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Annotated
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from auth import CurrentUser
@@ -10,6 +10,13 @@ from schemas import YoutubeVideoCreate, YoutubeVideoUpdate, YoutubeVideoResponse
 router = APIRouter()
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+async def _next_position(db: DbSession, user_id: int) -> int:
+    result = await db.execute(
+        select(func.max(models.YoutubeVideo.position)).where(models.YoutubeVideo.user_id == user_id)
+    )
+    max_position = result.scalar()
+    return (max_position + 1) if max_position is not None else 0
 
 @router.get("", response_model=list[YoutubeVideoResponse])
 async def list_my_youtube_videos(db: DbSession, current_user: CurrentUser):
@@ -22,7 +29,10 @@ async def list_my_youtube_videos(db: DbSession, current_user: CurrentUser):
 
 @router.post("", response_model=YoutubeVideoResponse, status_code=status.HTTP_201_CREATED)
 async def create_youtube_video(video_in: YoutubeVideoCreate, db: DbSession, current_user: CurrentUser):
-    video = models.YoutubeVideo(**video_in.model_dump(), user_id=current_user.id)
+    data = video_in.model_dump()
+    if data["position"] is None:
+        data["position"] = await _next_position(db, current_user.id)
+    video = models.YoutubeVideo(**data, user_id=current_user.id)
     db.add(video)
     await db.commit()
     await db.refresh(video)

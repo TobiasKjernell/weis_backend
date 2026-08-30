@@ -54,7 +54,7 @@ class YoutubeVideoBase(BaseModel):
     position: int
 
 class YoutubeVideoCreate(YoutubeVideoBase):
-    pass
+    position: int | None = None
 
 class YoutubeVideoUpdate(BaseModel):
     video: str | None = Field(default=None, min_length=1, max_length=200)
