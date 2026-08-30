@@ -17,13 +17,22 @@ MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 
 @lru_cache
 def get_s3_client():
+    # A blank/misconfigured AWS_REGION fails here with a clear error instead
+    # of silently producing a malformed endpoint. addressing_style="virtual"
+    # is required too: boto3's generate_presigned_post omits the region from
+    # the host under the default "auto" style, which makes S3 307-redirect
+    # to the correct regional endpoint — and that redirect breaks the
+    # browser's cross-origin POST (fetch can't carry a multipart/form-data
+    # body through a cross-origin redirect and still satisfy CORS on the
+    # second hop).
+    if not settings.aws_region:
+        raise RuntimeError("AWS_REGION is not configured")
     return boto3.client(
         "s3",
         region_name=settings.aws_region,
-        endpoint_url=f"https://s3.{settings.aws_region}.amazonaws.com",
         aws_access_key_id=settings.aws_access_key_id,
         aws_secret_access_key=settings.aws_secret_access_key.get_secret_value(),
-        config=Config(signature_version="s3v4"),
+        config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
     )
 
 def build_image_key(artist_slug: str, content_type: str) -> str:
