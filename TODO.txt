@@ -1,0 +1,207 @@
+MOROII BACKEND - MULTI-ARTIST + S3/CDN IMAGE UPLOADS
+======================================================
+Status as of 2026-08-27. Check items off as you go.
+
+
+PART 1 - AWS S3 + CLOUDFRONT SETUP (do this first, backend needs the values)
+==============================================================================
+
+[x] 1. Create the S3 bucket
+      - AWS Console -> S3 -> Create bucket
+      - Name must be globally unique (e.g. moroii-media)
+      - Region: pick one close to your users/server, note it down - this is AWS_REGION
+      - Block Public Access: leave ALL boxes checked (bucket stays private,
+        CloudFront will be the only thing allowed to read it)
+
+[ ] 2. Set bucket CORS policy - DONE but fix one thing: your production
+      origin was entered as "https://ember.polarbearsandboxproduction.com/"
+      (trailing slash) - CORS matches the Origin header exactly, which
+      never has a trailing slash, so remove it or that domain stays
+      blocked (needed so the browser can POST files directly
+      to S3 using the presigned upload the backend hands out - uploads use
+      a presigned POST, not a raw PUT, so the browser sends a multipart
+      form)
+      - Bucket -> Permissions -> Cross-origin resource sharing (CORS) -> Edit
+      - Paste (replace AllowedOrigins with your real frontend URL(s)):
+
+        [
+          {
+            "AllowedHeaders": ["*"],
+            "AllowedMethods": ["POST"],
+            "AllowedOrigins": [
+              "http://localhost:5173",
+              "https://your-frontend-domain.com"
+            ],
+            "ExposeHeaders": [] 
+          }
+        ]
+
+[x] 3. Create an IAM user for the backend (least privilege - only S3 access)
+      - IAM -> Users -> Create user (e.g. moroii-backend)
+      - Do NOT give console access, only "Access key - Programmatic access"
+      - Attach an inline policy scoped to just this bucket - needs Delete
+        too, since the backend removes the S3 object when an image is
+        deleted from the DB:
+
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+              "Resource": "arn:aws:s3:::<YOUR-ACTUAL-BUCKET-NAME>/*"
+            }
+          ]
+        }
+
+      NOTE: this bit us during setup - the Resource ARN must match your
+      REAL bucket name exactly, or every request fails with a confusing
+      AccessDenied that looks like a code bug rather than a policy typo.
+
+      - Create an access key for this user -> save the Access Key ID and
+        Secret Access Key somewhere safe. These become AWS_ACCESS_KEY_ID /  
+        AWS_SECRET_ACCESS_KEY. You will NOT be able to see the secret again
+        after this step.
+
+[x] 4. Create a CloudFront distribution in front of the bucket
+      - CloudFront -> Create distribution 
+      - Origin domain: select your S3 bucket
+      - Origin access: "Origin access control settings (recommended)"
+        -> create a new OAC -> select it
+      - Viewer protocol policy: "Redirect HTTP to HTTPS"
+      - Allowed methods: GET, HEAD (read-only - uploads bypass CloudFront
+        and go straight to S3 via the presigned URL)
+      - Cache policy: CachingOptimized is fine (image keys are unique UUIDs,
+        so nothing ever needs cache invalidation on update)
+      - Create the distribution 
+
+[x] 5. Let CloudFront update the bucket policy
+      - After creating the distribution, AWS shows a banner: "The S3 bucket
+        policy needs to be updated" -> click "Copy policy" -> go to the
+        bucket -> Permissions -> Bucket policy -> paste it in -> Save
+      - This is what allows CloudFront (and only CloudFront) to read from
+        the otherwise-private bucket
+
+[ ] 6. (Optional but recommended) Put a custom domain on the distribution
+      - Route 53 or your DNS provider: create/verify an ACM certificate
+        (must be in us-east-1 for CloudFront) for e.g. cdn.moroii.com
+      - CloudFront distribution -> Settings -> Alternate domain name (CNAME)
+        -> add cdn.moroii.com -> attach the certificate
+      - Add a DNS record (ALIAS/CNAME) pointing cdn.moroii.com at the
+        distribution's domain name (dxxxxxxxxxxxxx.cloudfront.net)
+      - This custom domain (or the raw *.cloudfront.net one if you skip
+        this step) is your CDN_DOMAIN
+
+[x] 7. Note down the 4 values you now have (all in local .env already):
+      AWS_ACCESS_KEY_ID       = <from step 3>
+      AWS_SECRET_ACCESS_KEY   = <from step 3>
+      AWS_REGION              = <from step 1>
+      S3_BUCKET_NAME          = <from step 1>
+      CDN_DOMAIN              = <cdn.moroii.com, or the *.cloudfront.net domain>
+
+
+PART 2 - BACKEND TODO
+==============================================================================
+
+[x] 1a. local .env - filled in and verified working (upload, 2MB cap
+      rejection, save, and delete-with-S3-cleanup all tested live against
+      the real bucket/CloudFront from this machine)
+
+[ ] 1b. Coolify app -> Environment Variables (PRODUCTION - not done yet):
+      SECRET_KEY, DATABASE_URL (the INTERNAL Postgres URL, not the public
+      158.174.180.143 one), FRONTEND_URL, AWS_ACCESS_KEY_ID,
+      AWS_SECRET_ACCESS_KEY, AWS_REGION, S3_BUCKET_NAME, CDN_DOMAIN
+
+[ ] 2. Git: push this repo to a remote (GitHub/GitLab) and connect it as
+      the deploy source in Coolify (you said you're handling this - let
+      me know if you want help)
+
+[ ] 3. Deploy on Coolify and confirm the container starts cleanly - the
+      Dockerfile runs "alembic upgrade head" automatically on every boot,
+      so no manual migration step should be needed once DATABASE_URL is
+      set to the internal Postgres URL
+
+[x] 4. Smoke-test the full flow end to end - DONE locally (upload ->
+      2MB cap rejected -> CloudFront serves it -> DB save -> public list
+      hides the S3 key -> delete removes both DB row and S3 object).
+      Worth a quick repeat against the actual Coolify deployment once
+      step 3 is done, just to confirm production env vars are wired
+      correctly too.
+
+[ ] 5. Rotate the admin password - it was created with a value hardcoded
+      in create_admin.py during setup; change it once you have a proper
+      "change password" flow, or update it directly in the DB
+
+[x] 6. Previously-known gaps - all closed:
+      - Deleting an image now removes the S3 object too (DELETE
+        /api/images/{id} and the admin equivalent both call S3
+        DeleteObject before removing the DB row)
+      - Uploads are hard-capped at 2MB, enforced by S3 itself via a
+        presigned POST policy condition (content-length-range) - not just
+        an app-side check, so it can't be bypassed by a client
+      - Admins can now request a presigned upload URL on behalf of any
+        artist: POST /api/users/{slug}/images/upload-url
+
+
+PART 3 - FRONTEND TODO
+==============================================================================
+
+[ ] 1. Auth
+      - Login form -> POST /api/users/token as
+        application/x-www-form-urlencoded with username + password
+        (OAuth2 password flow, not JSON)
+      - Store the returned access_token (memory or localStorage) and send
+        it as "Authorization: Bearer <token>" on every authenticated call
+
+[ ] 2. Public artist site (no auth needed)
+      - GET /api/artists -> list all artists (id, slug, display_name)
+      - GET /api/artists/{slug} -> one artist's public profile
+      - GET /api/artists/{slug}/youtube -> their videos
+      - GET /api/artists/{slug}/tour-dates -> their tour dates
+      - GET /api/artists/{slug}/images -> their gallery images (CDN urls,
+        ready to drop straight into <img src>)
+
+[ ] 3. Artist dashboard (logged in as that artist)
+      - GET/POST /api/youtube, /api/tour-dates, /api/images -> manage own
+        content (always scoped to the logged-in user automatically)
+      - PATCH/DELETE .../{id} -> edit/remove own items
+
+[ ] 4. Image upload UI (the actual new piece - uses a presigned POST, not PUT)
+      - User picks a file -> read its MIME type, reject client-side
+        anything over 2MB before even trying (S3 also enforces this, but
+        failing fast in the UI is nicer)
+      - POST /api/images/upload-url with {"content_type": "<mime type>"}
+        (only image/jpeg, image/png, image/webp, image/gif are accepted)
+        -> response is {upload_url, fields, key, public_url}
+      - Build a multipart/form-data body: append every key/value from
+        `fields` FIRST, then append the actual file last under the field
+        name "file" - order matters for S3's form parser
+      - POST that multipart body to `upload_url` (no Authorization header
+        needed here - the presigned fields ARE the auth). Example (fetch):
+
+          const form = new FormData();
+          Object.entries(fields).forEach(([k, v]) => form.append(k, v));
+          form.append("file", fileObject);
+          await fetch(upload_url, { method: "POST", body: form });
+
+      - On success (204 from S3), POST /api/images with {"url": public_url,
+        "key": key, "position": null} (omit position to auto-append) to
+        save the record
+      - Show the returned public_url (CDN-backed) as the image everywhere
+      - DELETE /api/images/{id} now cleans up S3 automatically - no extra
+        frontend work needed there
+
+[ ] 5. Admin dashboard (logged in as an admin account)
+      - GET /api/users -> list every artist account (full info incl.
+        username)
+      - POST /api/users -> create a new artist account
+        {username, password, slug, display_name}
+      - GET/POST/PATCH/DELETE /api/users/{slug}/youtube|tour-dates|images
+        -> manage any artist's content without needing their password
+      - POST /api/users/{slug}/images/upload-url -> same presigned-POST
+        flow as above, but uploads on behalf of a specific artist
+
+[ ] 6. Environment config
+      - Point the frontend's API base URL at the deployed backend
+      - Make sure the deployed frontend's exact origin is set as
+        FRONTEND_URL in the backend's env vars, or CORS will block it

@@ -90,6 +90,7 @@ class TourDateResponse(TourDateBase):
 
 class GalleryImageBase(BaseModel):
     url: str = Field(min_length=1, max_length=500)
+    key: str = Field(min_length=1, max_length=500)
     position: int
 
 class GalleryImageCreate(GalleryImageBase):
@@ -102,3 +103,28 @@ class GalleryImageResponse(GalleryImageBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     user_id: int
+
+class GalleryImagePublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    url: str
+    position: int
+    user_id: int
+
+ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+class ImageUploadRequest(BaseModel):
+    content_type: str
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str) -> str:
+        if value not in ALLOWED_IMAGE_CONTENT_TYPES:
+            raise ValueError(f"content_type must be one of {sorted(ALLOWED_IMAGE_CONTENT_TYPES)}")
+        return value
+
+class ImageUploadResponse(BaseModel):
+    upload_url: str
+    fields: dict[str, str]
+    key: str
+    public_url: str

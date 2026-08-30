@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 import models
-from schemas import ArtistPublic, YoutubeVideoResponse, TourDateResponse, GalleryImageResponse
+from schemas import ArtistPublic, YoutubeVideoResponse, TourDateResponse, GalleryImagePublic
 
 router = APIRouter()
 
@@ -50,7 +50,7 @@ async def list_artist_tour_dates(slug: str, db: DbSession):
     )
     return result.scalars().all()
 
-@router.get("/{slug}/images", response_model=list[GalleryImageResponse])
+@router.get("/{slug}/images", response_model=list[GalleryImagePublic])
 async def list_artist_images(slug: str, db: DbSession):
     artist = await _get_artist_by_slug(slug, db)
     result = await db.execute(

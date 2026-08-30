@@ -14,4 +14,10 @@ class Settings(BaseSettings):
 
     frontend_url: str | None = None
 
+    aws_access_key_id: str
+    aws_secret_access_key: SecretStr
+    aws_region: str
+    s3_bucket_name: str
+    cdn_domain: str
+
 settings = Settings()

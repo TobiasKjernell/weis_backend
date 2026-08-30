@@ -12,6 +12,8 @@ from schemas import (
     GalleryImageCreate,
     GalleryImageUpdate,
     GalleryImageResponse,
+    ImageUploadRequest,
+    ImageUploadResponse,
 )
 from typing import Annotated
 from fastapi.security import OAuth2PasswordRequestForm
@@ -21,6 +23,7 @@ from database import get_db
 from auth import create_access_token, verify_password, hash_password, CurrentAdmin
 from sqlalchemy import func, select
 import models
+from storage import build_image_key, build_public_url, generate_presigned_upload, delete_object
 
 router = APIRouter()
 
@@ -199,6 +202,20 @@ async def admin_delete_artist_tour_date(slug: str, tour_date_id: int, db: DbSess
     await db.delete(tour_date)
     await db.commit()
 
+@router.post("/{slug}/images/upload-url", response_model=ImageUploadResponse)
+async def admin_create_artist_image_upload_url(
+    slug: str, payload: ImageUploadRequest, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    key = build_image_key(artist.slug, payload.content_type)
+    presigned = generate_presigned_upload(key, payload.content_type)
+    return ImageUploadResponse(
+        upload_url=presigned["url"],
+        fields=presigned["fields"],
+        key=key,
+        public_url=build_public_url(key),
+    )
+
 @router.get("/{slug}/images", response_model=list[GalleryImageResponse])
 async def admin_list_artist_images(slug: str, db: DbSession, _admin: CurrentAdmin):
     artist = await _get_artist_by_slug_for_admin(slug, db)
@@ -248,5 +265,6 @@ async def admin_delete_artist_image(slug: str, image_id: int, db: DbSession, _ad
     if not image or image.user_id != artist.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
 
+    delete_object(image.key)
     await db.delete(image)
     await db.commit()

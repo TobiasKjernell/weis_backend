@@ -32,6 +32,7 @@ class GalleryImage(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
     url: Mapped[str] = mapped_column(String(500), nullable=False)
+    key: Mapped[str] = mapped_column(String(500), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     owner: Mapped["User"] = relationship(back_populates="gallery_images")

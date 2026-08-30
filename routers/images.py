@@ -5,11 +5,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from auth import CurrentUser
 import models
-from schemas import GalleryImageCreate, GalleryImageUpdate, GalleryImageResponse
+from schemas import GalleryImageCreate, GalleryImageUpdate, GalleryImageResponse, ImageUploadRequest, ImageUploadResponse
+from storage import build_image_key, build_public_url, generate_presigned_upload, delete_object
 
 router = APIRouter()
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+@router.post("/upload-url", response_model=ImageUploadResponse)
+async def create_image_upload_url(payload: ImageUploadRequest, current_user: CurrentUser):
+    key = build_image_key(current_user.slug, payload.content_type)
+    presigned = generate_presigned_upload(key, payload.content_type)
+    return ImageUploadResponse(
+        upload_url=presigned["url"],
+        fields=presigned["fields"],
+        key=key,
+        public_url=build_public_url(key),
+    )
 
 async def _next_position(db: DbSession, user_id: int) -> int:
     result = await db.execute(
@@ -65,5 +77,6 @@ async def delete_image(image_id: int, db: DbSession, current_user: CurrentUser):
     if image.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this image")
 
+    delete_object(image.key)
     await db.delete(image)
     await db.commit()
