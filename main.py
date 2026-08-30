@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from database import engine
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
-from routers import users, youtube, tourdates, artists
+from routers import users, youtube, tourdates, artists, images
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
@@ -30,6 +30,7 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(youtube.router, prefix="/api/youtube", tags=["Youtube"])
 app.include_router(tourdates.router, prefix="/api/tour-dates", tags=["Tour Dates"])
 app.include_router(artists.router, prefix="/api/artists", tags=["Artists"])
+app.include_router(images.router, prefix="/api/images", tags=["Images"])
 
 @app.get("/")
 async def ping():

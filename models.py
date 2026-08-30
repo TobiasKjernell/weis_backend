@@ -15,6 +15,7 @@ class User(Base):
 
     youtube_videos: Mapped[list["YoutubeVideo"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     tour_dates: Mapped[list["TourDates"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    gallery_images: Mapped[list["GalleryImage"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
 
 class YoutubeVideo(Base):
     __tablename__= "youtube"
@@ -26,10 +27,14 @@ class YoutubeVideo(Base):
     position: Mapped[int] = mapped_column(Integer)
     owner: Mapped["User"] = relationship(back_populates="youtube_videos")
 
-class Images(Base):
+class GalleryImage(Base):
     __tablename__= "images"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    owner: Mapped["User"] = relationship(back_populates="gallery_images")
 
 class TourDates(Base):
     __tablename__ = "tourdates"

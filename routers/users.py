@@ -9,6 +9,9 @@ from schemas import (
     TourDateCreate,
     TourDateUpdate,
     TourDateResponse,
+    GalleryImageCreate,
+    GalleryImageUpdate,
+    GalleryImageResponse,
 )
 from typing import Annotated
 from fastapi.security import OAuth2PasswordRequestForm
@@ -35,6 +38,13 @@ async def _get_artist_by_slug_for_admin(slug: str, db: DbSession) -> models.User
 async def _next_youtube_position(db: DbSession, user_id: int) -> int:
     result = await db.execute(
         select(func.max(models.YoutubeVideo.position)).where(models.YoutubeVideo.user_id == user_id)
+    )
+    max_position = result.scalar()
+    return (max_position + 1) if max_position is not None else 0
+
+async def _next_image_position(db: DbSession, user_id: int) -> int:
+    result = await db.execute(
+        select(func.max(models.GalleryImage.position)).where(models.GalleryImage.user_id == user_id)
     )
     max_position = result.scalar()
     return (max_position + 1) if max_position is not None else 0
@@ -187,4 +197,56 @@ async def admin_delete_artist_tour_date(slug: str, tour_date_id: int, db: DbSess
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour date not found")
 
     await db.delete(tour_date)
+    await db.commit()
+
+@router.get("/{slug}/images", response_model=list[GalleryImageResponse])
+async def admin_list_artist_images(slug: str, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(
+        select(models.GalleryImage)
+        .where(models.GalleryImage.user_id == artist.id)
+        .order_by(models.GalleryImage.position)
+    )
+    return result.scalars().all()
+
+@router.post("/{slug}/images", response_model=GalleryImageResponse, status_code=status.HTTP_201_CREATED)
+async def admin_create_artist_image(slug: str, image_in: GalleryImageCreate, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    data = image_in.model_dump()
+    if data["position"] is None:
+        data["position"] = await _next_image_position(db, artist.id)
+    image = models.GalleryImage(**data, user_id=artist.id)
+    db.add(image)
+    await db.commit()
+    await db.refresh(image)
+    return image
+
+@router.patch("/{slug}/images/{image_id}", response_model=GalleryImageResponse)
+async def admin_update_artist_image(
+    slug: str, image_id: int, image_in: GalleryImageUpdate, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(select(models.GalleryImage).where(models.GalleryImage.id == image_id))
+    image = result.scalars().first()
+
+    if not image or image.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+
+    for field, value in image_in.model_dump(exclude_unset=True).items():
+        setattr(image, field, value)
+
+    await db.commit()
+    await db.refresh(image)
+    return image
+
+@router.delete("/{slug}/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_artist_image(slug: str, image_id: int, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(select(models.GalleryImage).where(models.GalleryImage.id == image_id))
+    image = result.scalars().first()
+
+    if not image or image.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+
+    await db.delete(image)
     await db.commit()

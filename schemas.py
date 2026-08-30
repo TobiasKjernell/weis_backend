@@ -87,3 +87,18 @@ class TourDateResponse(TourDateBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     user_id: int
+
+class GalleryImageBase(BaseModel):
+    url: str = Field(min_length=1, max_length=500)
+    position: int
+
+class GalleryImageCreate(GalleryImageBase):
+    position: int | None = None
+
+class GalleryImageUpdate(BaseModel):
+    position: int | None = None
+
+class GalleryImageResponse(GalleryImageBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    user_id: int
