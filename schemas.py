@@ -1,6 +1,7 @@
 import re
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from datetime import datetime
+from models import MerchType, MerchSize, ReservationStatus
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
@@ -128,3 +129,83 @@ class ImageUploadResponse(BaseModel):
     fields: dict[str, str]
     key: str
     public_url: str
+
+class MerchItemBase(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    price_cents: int = Field(ge=0)
+    type: MerchType
+    image_url: str | None = Field(default=None, max_length=500)
+    image_key: str | None = Field(default=None, max_length=500)
+    position: int
+
+class MerchItemCreate(MerchItemBase):
+    position: int | None = None
+
+class MerchItemUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    price_cents: int | None = Field(default=None, ge=0)
+    image_url: str | None = Field(default=None, max_length=500)
+    image_key: str | None = Field(default=None, max_length=500)
+    position: int | None = None
+    is_active: bool | None = None
+
+class MerchVariantBase(BaseModel):
+    size: MerchSize | None = None
+    stock: int = Field(ge=0)
+
+class MerchVariantCreate(MerchVariantBase):
+    pass
+
+class MerchVariantUpdate(BaseModel):
+    stock: int | None = Field(default=None, ge=0)
+
+class MerchVariantResponse(MerchVariantBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    merch_item_id: int
+
+class MerchItemResponse(MerchItemBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    user_id: int
+    is_active: bool
+    variants: list[MerchVariantResponse] = []
+
+class MerchItemPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    description: str | None
+    price_cents: int
+    type: MerchType
+    image_url: str | None
+    position: int
+    variants: list[MerchVariantResponse] = []
+
+class MerchReservationCreate(BaseModel):
+    merch_variant_id: int
+    contact_email: str | None = Field(default=None, max_length=255)
+    contact_instagram: str | None = Field(default=None, max_length=100)
+    quantity: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def require_contact_method(self):
+        if not self.contact_email and not self.contact_instagram:
+            raise ValueError("Provide an email or an Instagram handle so the artist can reach you")
+        return self
+
+class MerchReservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    merch_variant_id: int
+    user_id: int
+    contact_email: str | None
+    contact_instagram: str | None
+    quantity: int
+    status: ReservationStatus
+    created_at: datetime
+
+class MerchReservationUpdate(BaseModel):
+    status: ReservationStatus

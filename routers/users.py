@@ -14,6 +14,14 @@ from schemas import (
     GalleryImageResponse,
     ImageUploadRequest,
     ImageUploadResponse,
+    MerchItemCreate,
+    MerchItemUpdate,
+    MerchItemResponse,
+    MerchVariantCreate,
+    MerchVariantUpdate,
+    MerchVariantResponse,
+    MerchReservationResponse,
+    MerchReservationUpdate,
 )
 from typing import Annotated
 from fastapi.security import OAuth2PasswordRequestForm
@@ -22,8 +30,10 @@ from sqlalchemy.exc import IntegrityError
 from database import get_db
 from auth import create_access_token, verify_password, hash_password, CurrentAdmin
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 import models
-from storage import build_image_key, build_public_url, generate_presigned_upload, delete_object
+from storage import build_image_key, build_merch_image_key, build_public_url, generate_presigned_upload, delete_object
+from routers.merch import _next_position as _next_merch_position, _validate_variant_for_item
 
 router = APIRouter()
 
@@ -268,3 +278,186 @@ async def admin_delete_artist_image(slug: str, image_id: int, db: DbSession, _ad
     delete_object(image.key)
     await db.delete(image)
     await db.commit()
+
+@router.post("/{slug}/merch/upload-url", response_model=ImageUploadResponse)
+async def admin_create_artist_merch_image_upload_url(
+    slug: str, payload: ImageUploadRequest, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    key = build_merch_image_key(artist.slug, payload.content_type)
+    presigned = generate_presigned_upload(key, payload.content_type)
+    return ImageUploadResponse(
+        upload_url=presigned["url"],
+        fields=presigned["fields"],
+        key=key,
+        public_url=build_public_url(key),
+    )
+
+@router.get("/{slug}/merch", response_model=list[MerchItemResponse])
+async def admin_list_artist_merch(slug: str, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(
+        select(models.MerchItem)
+        .where(models.MerchItem.user_id == artist.id)
+        .options(selectinload(models.MerchItem.variants))
+        .order_by(models.MerchItem.position)
+    )
+    return result.scalars().all()
+
+@router.post("/{slug}/merch", response_model=MerchItemResponse, status_code=status.HTTP_201_CREATED)
+async def admin_create_artist_merch_item(slug: str, item_in: MerchItemCreate, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    data = item_in.model_dump()
+    if data["position"] is None:
+        data["position"] = await _next_merch_position(db, artist.id)
+    item = models.MerchItem(**data, user_id=artist.id)
+    db.add(item)
+    await db.commit()
+    await db.refresh(item, attribute_names=["variants"])
+    return item
+
+@router.patch("/{slug}/merch/{item_id}", response_model=MerchItemResponse)
+async def admin_update_artist_merch_item(
+    slug: str, item_id: int, item_in: MerchItemUpdate, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(
+        select(models.MerchItem)
+        .where(models.MerchItem.id == item_id)
+        .options(selectinload(models.MerchItem.variants))
+    )
+    item = result.scalars().first()
+
+    if not item or item.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merch item not found")
+
+    for field, value in item_in.model_dump(exclude_unset=True).items():
+        setattr(item, field, value)
+
+    await db.commit()
+    await db.refresh(item, attribute_names=["variants"])
+    return item
+
+@router.delete("/{slug}/merch/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_artist_merch_item(slug: str, item_id: int, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(select(models.MerchItem).where(models.MerchItem.id == item_id))
+    item = result.scalars().first()
+
+    if not item or item.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merch item not found")
+
+    if item.image_key:
+        delete_object(item.image_key)
+    await db.delete(item)
+    await db.commit()
+
+@router.post(
+    "/{slug}/merch/{item_id}/variants", response_model=MerchVariantResponse, status_code=status.HTTP_201_CREATED
+)
+async def admin_create_artist_merch_variant(
+    slug: str, item_id: int, variant_in: MerchVariantCreate, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(
+        select(models.MerchItem)
+        .where(models.MerchItem.id == item_id)
+        .options(selectinload(models.MerchItem.variants))
+    )
+    item = result.scalars().first()
+
+    if not item or item.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merch item not found")
+
+    _validate_variant_for_item(item, variant_in.size)
+
+    variant = models.MerchVariant(**variant_in.model_dump(), merch_item_id=item.id)
+    db.add(variant)
+    await db.commit()
+    await db.refresh(variant)
+    return variant
+
+@router.patch("/{slug}/merch/{item_id}/variants/{variant_id}", response_model=MerchVariantResponse)
+async def admin_update_artist_merch_variant(
+    slug: str, item_id: int, variant_id: int, variant_in: MerchVariantUpdate, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    item_result = await db.execute(select(models.MerchItem).where(models.MerchItem.id == item_id))
+    item = item_result.scalars().first()
+    if not item or item.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merch item not found")
+
+    result = await db.execute(
+        select(models.MerchVariant).where(
+            models.MerchVariant.id == variant_id, models.MerchVariant.merch_item_id == item.id
+        )
+    )
+    variant = result.scalars().first()
+    if not variant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+
+    for field, value in variant_in.model_dump(exclude_unset=True).items():
+        setattr(variant, field, value)
+
+    await db.commit()
+    await db.refresh(variant)
+    return variant
+
+@router.delete("/{slug}/merch/{item_id}/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_artist_merch_variant(
+    slug: str, item_id: int, variant_id: int, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    item_result = await db.execute(select(models.MerchItem).where(models.MerchItem.id == item_id))
+    item = item_result.scalars().first()
+    if not item or item.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merch item not found")
+
+    result = await db.execute(
+        select(models.MerchVariant).where(
+            models.MerchVariant.id == variant_id, models.MerchVariant.merch_item_id == item.id
+        )
+    )
+    variant = result.scalars().first()
+    if not variant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+
+    await db.delete(variant)
+    await db.commit()
+
+@router.get("/{slug}/merch/reservations", response_model=list[MerchReservationResponse])
+async def admin_list_artist_merch_reservations(slug: str, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(
+        select(models.MerchReservation)
+        .where(models.MerchReservation.user_id == artist.id)
+        .order_by(models.MerchReservation.created_at.desc())
+    )
+    return result.scalars().all()
+
+@router.patch("/{slug}/merch/reservations/{reservation_id}", response_model=MerchReservationResponse)
+async def admin_update_artist_merch_reservation(
+    slug: str, reservation_id: int, update_in: MerchReservationUpdate, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    result = await db.execute(
+        select(models.MerchReservation).where(models.MerchReservation.id == reservation_id)
+    )
+    reservation = result.scalars().first()
+    if not reservation or reservation.user_id != artist.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation not found")
+
+    if update_in.status == models.ReservationStatus.cancelled and reservation.status != models.ReservationStatus.cancelled:
+        variant_result = await db.execute(
+            select(models.MerchVariant)
+            .where(models.MerchVariant.id == reservation.merch_variant_id)
+            .with_for_update()
+        )
+        variant = variant_result.scalars().first()
+        if variant:
+            variant.stock += reservation.quantity
+
+    reservation.status = update_in.status
+    await db.commit()
+    await db.refresh(reservation)
+    return reservation

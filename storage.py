@@ -33,11 +33,15 @@ def get_s3_client():
         aws_access_key_id=settings.aws_access_key_id,
         aws_secret_access_key=settings.aws_secret_access_key.get_secret_value(),
         config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
-    )
+            )
 
 def build_image_key(artist_slug: str, content_type: str) -> str:
     extension = CONTENT_TYPE_EXTENSIONS[content_type]
     return f"images/{artist_slug}/{uuid.uuid4().hex}{extension}"
+
+def build_merch_image_key(artist_slug: str, content_type: str) -> str:
+    extension = CONTENT_TYPE_EXTENSIONS[content_type]
+    return f"merch/{artist_slug}/{uuid.uuid4().hex}{extension}"
 
 def build_public_url(key: str) -> str:
     return f"https://{settings.cdn_domain}/{key}"
