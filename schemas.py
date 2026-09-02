@@ -1,4 +1,5 @@
 import re
+from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from datetime import datetime
 from models import MerchType, MerchSize, ReservationStatus
@@ -208,4 +209,7 @@ class MerchReservationResponse(BaseModel):
     created_at: datetime
 
 class MerchReservationUpdate(BaseModel):
-    status: ReservationStatus
+    # Cancelling isn't a status transition — it deletes the reservation and
+    # restores its stock (see the DELETE endpoint), so it can't be toggled
+    # back and forth and double-credit stock.
+    status: Literal[ReservationStatus.pending, ReservationStatus.contacted, ReservationStatus.fulfilled]

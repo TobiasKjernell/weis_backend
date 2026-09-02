@@ -177,17 +177,28 @@ async def update_reservation_status(
     if reservation.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to modify this reservation")
 
-    if update_in.status == models.ReservationStatus.cancelled and reservation.status != models.ReservationStatus.cancelled:
-        variant_result = await db.execute(
-            select(models.MerchVariant)
-            .where(models.MerchVariant.id == reservation.merch_variant_id)
-            .with_for_update()
-        )
-        variant = variant_result.scalars().first()
-        if variant:
-            variant.stock += reservation.quantity
-
     reservation.status = update_in.status
     await db.commit()
     await db.refresh(reservation)
     return reservation
+
+@router.delete("/reservations/{reservation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_reservation(reservation_id: int, db: DbSession, current_user: CurrentUser):
+    result = await db.execute(
+        select(models.MerchReservation).where(models.MerchReservation.id == reservation_id)
+    )
+    reservation = result.scalars().first()
+    if not reservation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation not found")
+    if reservation.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to modify this reservation")
+
+    variant_result = await db.execute(
+        select(models.MerchVariant).where(models.MerchVariant.id == reservation.merch_variant_id).with_for_update()
+    )
+    variant = variant_result.scalars().first()
+    if variant:
+        variant.stock += reservation.quantity
+
+    await db.delete(reservation)
+    await db.commit()
