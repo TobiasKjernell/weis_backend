@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
+from auth import verify_password
 import models
 from schemas import (
     ArtistPublic,
@@ -13,6 +14,7 @@ from schemas import (
     MerchItemPublic,
     MerchReservationCreate,
     MerchReservationResponse,
+    PressVerify,
 )
 
 router = APIRouter()
@@ -127,3 +129,15 @@ async def reserve_merch_item(slug: str, item_id: int, reservation_in: MerchReser
     await db.commit()
     await db.refresh(reservation)
     return reservation
+
+@router.post("/{slug}/press/verify", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_press_password(slug: str, data: PressVerify, db: DbSession):
+    """Press-site gate: 204 if the password belongs to an unblocked label, else 401."""
+    artist = await _get_artist_by_slug(slug, db)
+    result = await db.execute(
+        select(models.PressAccess).where(
+            models.PressAccess.user_id == artist.id, models.PressAccess.is_blocked == False
+        )
+    )
+    if not any(verify_password(data.password, e.password_hash) for e in result.scalars()):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")

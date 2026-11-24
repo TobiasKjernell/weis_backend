@@ -22,6 +22,9 @@ from schemas import (
     MerchVariantResponse,
     MerchReservationResponse,
     MerchReservationUpdate,
+    PressAccessCreate,
+    PressAccessUpdate,
+    PressAccessResponse,
 )
 from typing import Annotated
 from fastapi.security import OAuth2PasswordRequestForm
@@ -33,6 +36,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 import models
 from storage import build_image_key, build_merch_image_key, build_public_url, generate_presigned_upload, delete_object
+from routers import press as press_ops
 from routers.merch import _next_position as _next_merch_position, _validate_variant_for_item
 
 router = APIRouter()
@@ -473,3 +477,25 @@ async def admin_cancel_artist_merch_reservation(
 
     await db.delete(reservation)
     await db.commit()
+
+@router.get("/{slug}/press", response_model=list[PressAccessResponse])
+async def admin_list_artist_press(slug: str, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    return await press_ops.list_access(db, artist.id)
+
+@router.post("/{slug}/press", response_model=PressAccessResponse, status_code=status.HTTP_201_CREATED)
+async def admin_create_artist_press(slug: str, data: PressAccessCreate, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    return await press_ops.create_entry(data, db, artist.id)
+
+@router.patch("/{slug}/press/{access_id}", response_model=PressAccessResponse)
+async def admin_update_artist_press(
+    slug: str, access_id: int, data: PressAccessUpdate, db: DbSession, _admin: CurrentAdmin
+):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    return await press_ops.update_entry(access_id, data, db, artist.id)
+
+@router.delete("/{slug}/press/{access_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_artist_press(slug: str, access_id: int, db: DbSession, _admin: CurrentAdmin):
+    artist = await _get_artist_by_slug_for_admin(slug, db)
+    await press_ops.delete_entry(access_id, db, artist.id)

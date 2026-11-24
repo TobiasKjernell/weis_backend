@@ -213,3 +213,22 @@ class MerchReservationUpdate(BaseModel):
     # restores its stock (see the DELETE endpoint), so it can't be toggled
     # back and forth and double-credit stock.
     status: Literal[ReservationStatus.pending, ReservationStatus.contacted, ReservationStatus.fulfilled]
+
+class PressAccessCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=6, max_length=200)
+
+class PressAccessUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    password: str | None = Field(default=None, min_length=6, max_length=200)
+    is_blocked: bool | None = None
+
+class PressAccessResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    is_blocked: bool
+    created_at: datetime
+
+class PressVerify(BaseModel):
+    password: str = Field(max_length=200)
